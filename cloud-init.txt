@@ -1,0 +1,51 @@
+#cloud-config
+package_update: true
+
+runcmd:
+  - wget "{{SAS_URL}}" -O /home/azureuser/qr_seed.bin
+
+  - wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/mc.sh
+  - bash /tmp/mc.sh -b -p /home/azureuser/miniconda
+  - chown -R azureuser:azureuser /home/azureuser/miniconda
+  - echo 'export PATH="/home/azureuser/miniconda/bin:$PATH"' >> /home/azureuser/.bashrc
+
+  - su - azureuser -c '
+      source ~/.bashrc &&
+      conda create -y -n qrng-demo python=3.10 &&
+      conda activate qrng-demo &&
+      pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117 &&
+      pip install numpy
+    '
+
+  - su - azureuser -c '
+      cat > /home/azureuser/run_bench.py <<'"'"'EOF
+import time, torch
+from philox_hybrid import AsyncQRNGPhilox
+
+def measure(fn, n=10_000_000):
+    torch.cuda.synchronize()
+    t0 = time.time()
+    fn(n)
+    torch.cuda.synchronize()
+    return n / (time.time() - t0)
+
+def baseline(n):
+    _ = torch.cuda.FloatTensor(n).random_()
+
+def hybrid(n):
+    gen = AsyncQRNGPhilox(seed_file="/home/azureuser/qr_seed.bin",
+                          buffer_size=1<<20)
+    _ = gen.rand(n)
+
+if __name__ == "__main__":
+    for name, fn in [("cuRAND", baseline), ("QRNG+", hybrid)]:
+        thr = measure(fn)
+        print(f"{name} throughput: {thr:,.0f} rands/sec")
+EOF
+    '
+
+  - su - azureuser -c '
+      source ~/.bashrc &&
+      conda activate qrng-demo &&
+      python3 /home/azureuser/run_bench.py > /home/azureuser/bench.log 2>&1
+    '
