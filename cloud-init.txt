@@ -1,34 +1,33 @@
 #cloud-config
 package_update: true
+package_upgrade: true
 
 runcmd:
-  # 1) Install Git, wget, Miniconda
+  # 1) Install basics & Miniconda
   - apt-get update -y
-  - apt-get install -y git wget bzip2
+  - apt-get install -y git wget bzip2 at
   - wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/mc.sh
   - bash /tmp/mc.sh -b -p /home/azureuser/miniconda
   - chown -R azureuser:azureuser /home/azureuser/miniconda
   - echo 'export PATH="/home/azureuser/miniconda/bin:$PATH"' >> /home/azureuser/.bashrc
 
-  # 2) Clone your demo repo (with qr_seed.bin inside)
-  - su - azureuser -c '
-      source ~/.bashrc &&
-      git clone https://github.com/TDMD2/qrngq.git ~/qrngq
-    '
+  # 2) Accept Conda TOS non-interactively
+  - su - azureuser -c 'bash -lc "conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main && conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r"'
 
-  # 3) Create Conda env & install deps
-  - su - azureuser -c '
-      source ~/.bashrc &&
-      conda create -y -n qrng-demo python=3.10 &&
-      conda activate qrng-demo &&
-      pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117 &&
-      pip install numpy
-    '
+  # 3) Clone your repo
+  - su - azureuser -c 'bash -lc "git clone https://github.com/TDMD2/qrngq.git ~/qrngq"'
 
-  # 4) Run the benchmark from the cloned repo
-  - su - azureuser -c '
-      source ~/.bashrc &&
-      conda activate qrng-demo &&
-      cd ~/qrngq &&
-      python3 run_bench.py > /home/azureuser/bench.log 2>&1
-    '
+  # 4) Set up the Conda env & install deps
+  - su - azureuser -c 'bash -lc "conda create -y -n qrng-demo python=3.10 && conda activate qrng-demo && pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu117 numpy"'
+
+  # 5) **Run the benchmark and print straight to console**
+  - su - azureuser -c 'bash -lc "cd ~/qrngq && echo ; echo \"--- BENCHMARK OUTPUT ---\" ; python3 run_bench.py ; echo \"--- END BENCHMARK ---\" ; echo"'
+
+  # 6) Schedule shutdown in 60 minutes
+  - echo "shutdown -h +60" >> /home/azureuser/shutdown.sh
+  - chmod +x /home/azureuser/shutdown.sh
+  - at now + 60 minutes -f /home/azureuser/shutdown.sh
+
+final_message: |
+  ▶ Your QRNG vs. cuRAND benchmark has run and its output is in your console scrollback (and in /var/log/cloud-init-output.log).
+  ▶ The VM will automatically power off in 60 minutes.
