@@ -2,13 +2,21 @@
 package_update: true
 
 runcmd:
-  - wget "{{SAS_URL}}" -O /home/azureuser/qr_seed.bin
-
+  # 1) Install Git, wget, Miniconda
+  - apt-get update -y
+  - apt-get install -y git wget bzip2
   - wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/mc.sh
   - bash /tmp/mc.sh -b -p /home/azureuser/miniconda
   - chown -R azureuser:azureuser /home/azureuser/miniconda
   - echo 'export PATH="/home/azureuser/miniconda/bin:$PATH"' >> /home/azureuser/.bashrc
 
+  # 2) Clone your demo repo (with qr_seed.bin inside)
+  - su - azureuser -c '
+      source ~/.bashrc &&
+      git clone https://github.com/TDMD2/qrngq.git ~/qrngq
+    '
+
+  # 3) Create Conda env & install deps
   - su - azureuser -c '
       source ~/.bashrc &&
       conda create -y -n qrng-demo python=3.10 &&
@@ -17,35 +25,10 @@ runcmd:
       pip install numpy
     '
 
-  - su - azureuser -c '
-      cat > /home/azureuser/run_bench.py <<'"'"'EOF
-import time, torch
-from philox_hybrid import AsyncQRNGPhilox
-
-def measure(fn, n=10_000_000):
-    torch.cuda.synchronize()
-    t0 = time.time()
-    fn(n)
-    torch.cuda.synchronize()
-    return n / (time.time() - t0)
-
-def baseline(n):
-    _ = torch.cuda.FloatTensor(n).random_()
-
-def hybrid(n):
-    gen = AsyncQRNGPhilox(seed_file="/home/azureuser/qr_seed.bin",
-                          buffer_size=1<<20)
-    _ = gen.rand(n)
-
-if __name__ == "__main__":
-    for name, fn in [("cuRAND", baseline), ("QRNG+", hybrid)]:
-        thr = measure(fn)
-        print(f"{name} throughput: {thr:,.0f} rands/sec")
-EOF
-    '
-
+  # 4) Run the benchmark from the cloned repo
   - su - azureuser -c '
       source ~/.bashrc &&
       conda activate qrng-demo &&
-      python3 /home/azureuser/run_bench.py > /home/azureuser/bench.log 2>&1
+      cd ~/qrngq &&
+      python3 run_bench.py > /home/azureuser/bench.log 2>&1
     '
